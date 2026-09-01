@@ -33,7 +33,12 @@ Enable **Background Modes > Location updates**. Add:
 <string>Your explanation of continuous/background use.</string>
 <key>UIBackgroundModes</key>
 <array><string>location</string></array>
+<key>NSMotionUsageDescription</key>
+<string>Your explanation of motion-based battery optimisation.</string>
 ```
+Both entries are load-bearing. Without `UIBackgroundModes` containing `location`, iOS stops delivering
+updates the moment the app leaves the foreground; the library emits a `backgroundMode` error event when
+the key is missing. `NSMotionUsageDescription` is required whenever `motionDetection` is on.
 Call the bootstrap in `didFinishLaunchingWithOptions` before React Native setup:
 ```swift
 NativeBackgroundLocationBootstrap.start()
@@ -49,7 +54,26 @@ func application(_ application: UIApplication,
   )
 }
 ```
-Request **Always** location only after explaining the feature to the user.
+Request **Always** location only after explaining the feature to the user. Always is not optional for
+background work: with When In Use, updates stop once the app is suspended and cannot be restarted, and
+significant-change, visit, and region monitoring never start at all. `getState().authorization` reports
+`always` / `whenInUse` / `denied` / `restricted` / `notDetermined`, and an `authorization` error event is
+emitted when tracking starts without it.
+
+## Background and termination behaviour
+
+| Situation | What happens |
+|---|---|
+| App backgrounded | Continuous updates keep running. The process is not suspended while the `location` background mode is active. |
+| System terminates the app | Significant-change monitoring relaunches it in the background and the stored configuration is restored. |
+| User swipes the app away | Same relaunch path on iOS 8+. Timing is OS-controlled and can lag. |
+| `stopOnTerminate: true` | Tracking stays stopped after the process dies. |
+| Android swipe-away | The foreground service is restarted unless `stopOnTerminate` is set. |
+
+After a kill, tracking is **event-driven and coarse** — significant-change is roughly 500 m — until a
+relaunch restores continuous updates. Locations are persisted to SQLite before any upload is attempted,
+so a gap in delivery is not a gap in data. Nothing recovers from a device-level Force Stop on Android or
+from revoked permissions.
 
 ## Android setup
 The library manifest declares location, background-location, activity-recognition, notification, foreground-service, boot and internet permissions. Your app still must request dangerous permissions at runtime and satisfy Play policy.

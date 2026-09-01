@@ -6,7 +6,15 @@ export interface HttpConfig {
   method?: 'POST' | 'PUT';
   headers?: Record<string, string>;
   batchSize?: number;
+  /** Per-request timeout. Defaults to 15000. */
   timeoutMs?: number;
+  /**
+   * Consecutive 5xx failures tolerated for one batch before it is discarded so it cannot block the
+   * queue behind it. Defaults to 10. Transport failures (no network, timeout) are always retried and
+   * never count against this. A 4xx other than 408/429 is treated as permanent and discards the batch
+   * immediately, since it will not start succeeding on repeat. Retries use exponential backoff capped
+   * at five minutes, persisted across process termination.
+   */
   maxRetries?: number;
   syncThreshold?: number;
   /**
@@ -34,6 +42,13 @@ export interface HttpConfig {
 }
 
 export interface TrackingConfig {
+  /**
+   * Selects the tracking profile. Defaults to `adaptive`, which is the only mode that follows detected
+   * motion (automotive -> navigation, walking/running/cycling -> active, otherwise balanced); every
+   * other mode keeps the profile you set. On iOS `significant`, `lowPower`, and `visits` register a
+   * different Core Location service rather than continuous updates. Android has no equivalent of
+   * `significant` or `visits` and maps both to a low-power, long-interval request.
+   */
   mode?: TrackingMode;
   desiredAccuracyMeters?: number;
   distanceFilterMeters?: number;
@@ -48,6 +63,11 @@ export interface TrackingConfig {
    */
   stopOnTerminate?: boolean;
   startOnBoot?: boolean;
+  /**
+   * iOS only. Maps to `pausesLocationUpdatesAutomatically`. Defaults to **false**: once iOS pauses
+   * updates it decides whether they ever resume, and in the background that regularly means never.
+   * Enable it only if you want that battery trade-off and can tolerate gaps.
+   */
   pausesAutomatically?: boolean;
   heartbeatIntervalSeconds?: number;
   motionDetection?: boolean;

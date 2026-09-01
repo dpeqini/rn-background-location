@@ -1,8 +1,15 @@
 package com.greinchville.backgroundlocation
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import androidx.core.content.ContextCompat
+import com.google.android.gms.tasks.CancellationTokenSource
+import java.util.concurrent.atomic.AtomicBoolean
 import com.facebook.react.bridge.*
 import com.google.android.gms.location.*
 import org.json.JSONObject
@@ -19,7 +26,26 @@ class NativeBackgroundLocationModule(private val ctx:ReactApplicationContext): R
   @ReactMethod fun getQueuedLocations(limit:Double,p:Promise){val a=Arguments.createArray();LocationQueue.get(ctx).peek(limit.toInt()).forEach{(_,s)->a.pushMap(jsonMap(JSONObject(s)))};p.resolve(a)}
   @ReactMethod fun clearQueue(p:Promise){LocationQueue.get(ctx).clear();p.resolve(null)}
   @ReactMethod fun sync(p:Promise){try{val(r,n)=NativeHttpSync.sync(ctx);val m=Arguments.createMap();m.putInt("sent",r);m.putInt("remaining",n);p.resolve(m)}catch(e:Exception){p.reject("sync_failed",e)}}
-  @ReactMethod fun getCurrentLocation(options:ReadableMap,p:Promise){ try{ LocationServices.getFusedLocationProviderClient(ctx).getCurrentLocation(if(options.hasKey("highAccuracy")&&options.getBoolean("highAccuracy"))Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY,null).addOnSuccessListener{l->if(l==null)p.reject("no_location","No location") else {val o=JSONObject().put("id",java.util.UUID.randomUUID().toString()).put("latitude",l.latitude).put("longitude",l.longitude).put("accuracy",l.accuracy).put("timestamp",l.time).put("source","fused");p.resolve(jsonMap(o))}}.addOnFailureListener{p.reject("location_failed",it)} }catch(e:SecurityException){p.reject("permission",e)} }
+  // timeoutMs is part of the JS signature and was ignored, so a request that never resolved left
+  // the promise pending forever. Every path below settles exactly once.
+  @ReactMethod fun getCurrentLocation(options:ReadableMap,p:Promise){
+    try{
+      val priority=if(options.hasKey("highAccuracy")&&options.getBoolean("highAccuracy")) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY
+      val timeout=if(options.hasKey("timeoutMs")) options.getDouble("timeoutMs").toLong() else 15000L
+      val cts=CancellationTokenSource(); val settled=AtomicBoolean(false); val handler=Handler(Looper.getMainLooper())
+      handler.postDelayed({ if(settled.compareAndSet(false,true)){ cts.cancel(); p.reject("timeout","Timed out waiting for a location fix") } }, timeout.coerceAtLeast(1000L))
+      LocationServices.getFusedLocationProviderClient(ctx).getCurrentLocation(priority,cts.token)
+        .addOnSuccessListener{ l->
+          if(!settled.compareAndSet(false,true)) return@addOnSuccessListener
+          handler.removeCallbacksAndMessages(null)
+          if(l==null) p.reject("no_location","No location") else {
+            val o=JSONObject().put("id",java.util.UUID.randomUUID().toString()).put("latitude",l.latitude).put("longitude",l.longitude).put("accuracy",l.accuracy).put("timestamp",l.time).put("source","fused")
+            p.resolve(jsonMap(o))
+          }
+        }
+        .addOnFailureListener{ if(settled.compareAndSet(false,true)){ handler.removeCallbacksAndMessages(null); p.reject("location_failed",it) } }
+    }catch(e:SecurityException){p.reject("permission",e)}
+  }
   @ReactMethod fun addGeofence(g:ReadableMap,p:Promise){try{val b=Geofence.Builder().setRequestId(g.getString("id")!!).setCircularRegion(g.getDouble("latitude"),g.getDouble("longitude"),g.getDouble("radius").toFloat()).setExpirationDuration(Geofence.NEVER_EXPIRE);var trans=0;if(!g.hasKey("notifyOnEntry")||g.getBoolean("notifyOnEntry"))trans=trans or Geofence.GEOFENCE_TRANSITION_ENTER;if(!g.hasKey("notifyOnExit")||g.getBoolean("notifyOnExit"))trans=trans or Geofence.GEOFENCE_TRANSITION_EXIT;b.setTransitionTypes(trans);val req=GeofencingRequest.Builder().setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER).addGeofence(b.build()).build();LocationServices.getGeofencingClient(ctx).addGeofences(req,geofencePi()).addOnSuccessListener{p.resolve(null)}.addOnFailureListener{p.reject("geofence",it)}}catch(e:SecurityException){p.reject("permission",e)}}
   @ReactMethod fun removeGeofence(id:String,p:Promise){LocationServices.getGeofencingClient(ctx).removeGeofences(listOf(id)).addOnCompleteListener{p.resolve(null)}}
   @ReactMethod fun removeAllGeofences(p:Promise){LocationServices.getGeofencingClient(ctx).removeGeofences(geofencePi()).addOnCompleteListener{p.resolve(null)}}
@@ -27,6 +53,14 @@ class NativeBackgroundLocationModule(private val ctx:ReactApplicationContext): R
   private fun motionPi()=PendingIntent.getBroadcast(ctx,1002,Intent(ctx,ActivityTransitionReceiver::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
   private fun registerMotion(){if(!ConfigStore.json(ctx).optBoolean("motionDetection",true))return;val types=listOf(DetectedActivity.STILL,DetectedActivity.WALKING,DetectedActivity.RUNNING,DetectedActivity.ON_BICYCLE,DetectedActivity.IN_VEHICLE);val transitions=types.flatMap{t->listOf(ActivityTransition.Builder().setActivityType(t).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build())};try{ActivityRecognition.getClient(ctx).requestActivityTransitionUpdates(ActivityTransitionRequest(transitions),motionPi())}catch(_:SecurityException){}}
   private fun unregisterMotion(){ActivityRecognition.getClient(ctx).removeActivityTransitionUpdates(motionPi())}
-  private fun stateMap():WritableMap{val m=Arguments.createMap();m.putBoolean("enabled",true);m.putString("authorization","platform");m.putBoolean("tracking",ConfigStore.tracking(ctx));m.putString("mode",ConfigStore.json(ctx).optString("mode","adaptive"));m.putInt("queueSize",LocationQueue.get(ctx).count());m.putString("motion",ConfigStore.motion(ctx));return m}
+  private fun stateMap():WritableMap{val m=Arguments.createMap();m.putBoolean("enabled",true);m.putString("authorization",authorization());m.putBoolean("tracking",ConfigStore.tracking(ctx));m.putString("mode",ConfigStore.json(ctx).optString("mode","adaptive"));m.putInt("queueSize",LocationQueue.get(ctx).count());m.putString("motion",ConfigStore.motion(ctx));return m}
+  // Was the literal string "platform", which told a caller nothing. Reported in the same
+  // vocabulary as iOS so the field is usable cross-platform.
+  private fun authorization():String{
+    val granted={ perm:String-> ContextCompat.checkSelfPermission(ctx,perm)==PackageManager.PERMISSION_GRANTED }
+    if(!granted(Manifest.permission.ACCESS_FINE_LOCATION) && !granted(Manifest.permission.ACCESS_COARSE_LOCATION)) return "denied"
+    val background = Build.VERSION.SDK_INT < 29 || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+    return if(background) "always" else "whenInUse"
+  }
   private fun jsonMap(o:JSONObject):WritableMap{val m=Arguments.createMap();o.keys().forEach{k->when(val v=o.get(k)){is String->m.putString(k,v);is Double->m.putDouble(k,v);is Int->m.putInt(k,v);is Long->m.putDouble(k,v.toDouble());is Boolean->m.putBoolean(k,v)}};return m}
 }
