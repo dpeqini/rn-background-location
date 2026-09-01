@@ -1,0 +1,20 @@
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Android
+android/build/
+android/.gradle/
+android/local.properties
+*.iml
+
+# iOS
+ios/Pods/
+ios/build/
+*.xcuserstate
+xcuserdata/
+
+# Editors
+.idea/
+.vscode/
+.DS_Store

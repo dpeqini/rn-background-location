@@ -1,0 +1,13 @@
+{
+  "name": "@greinchville/react-native-background-location",
+  "version": "0.1.0",
+  "description": "Native-first adaptive background location tracking for React Native",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "react-native": "src/index.ts",
+  "files": ["src", "android", "ios", "*.podspec", "react-native.config.js", "README.md"],
+  "scripts": {"typecheck": "tsc --noEmit"},
+  "peerDependencies": {"react": "*", "react-native": ">=0.79"},
+  "devDependencies": {"typescript": "^5.8.0"}
+}

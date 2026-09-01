@@ -1,0 +1,17 @@
+buildscript { repositories { google(); mavenCentral() } }
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+  namespace 'com.greinchville.backgroundlocation'
+  compileSdk 36
+  defaultConfig { minSdk 24; targetSdk 36 }
+}
+repositories { google(); mavenCentral() }
+dependencies {
+  implementation 'com.facebook.react:react-android'
+  implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.1.20'
+  implementation 'com.google.android.gms:play-services-location:21.3.0'
+  implementation 'androidx.work:work-runtime-ktx:2.10.1'
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}
