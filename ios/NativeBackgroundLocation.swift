@@ -202,8 +202,9 @@ final class BackgroundLocationEngine: NSObject, CLLocationManagerDelegate {
       self.emit?("backgroundLocation:sync",["sent":sent,"remaining":self.queue.count()])
       if outcome == .dropped {self.emitDrop(1,error)}
       completion(sent,self.queue.count(),outcome == .retry ? error : nil)
-      // A dropped record has left the queue too, so keep draining rather than stalling on it.
-      if outcome != .retry, self.tracking, self.queue.count()>0 { self.syncSingle(h,url){_,_,_ in} }
+      // Only a delivery chains into the next record. A drop also frees the queue, but chaining on it
+      // would burn through thousands of records in a burst against an endpoint rejecting everything.
+      if outcome == .delivered, self.tracking, self.queue.count()>0 { self.syncSingle(h,url){_,_,_ in} }
     }
   }
 
