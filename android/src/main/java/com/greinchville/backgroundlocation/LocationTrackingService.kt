@@ -1,11 +1,15 @@
 package com.greinchville.backgroundlocation
 
 import android.app.*
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.location.Location
 import android.os.*
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.work.*
 import com.facebook.react.bridge.Arguments
 import com.google.android.gms.location.*
@@ -14,14 +18,24 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class LocationTrackingService: Service() {
+  companion object { const val ACTION_MOTION_CHANGED = "com.greinchville.backgroundlocation.MOTION_CHANGED" }
+
   private lateinit var fused: FusedLocationProviderClient
   private var callback: LocationCallback? = null
   private val handler = Handler(Looper.getMainLooper())
   private var lastHeartbeat = 0L
+  // Motion changes used to be applied by restarting the service, which is a background
+  // foreground-service start on Android 12+ and throws. A running service re-subscribes in place.
+  private val motionReceiver = object: BroadcastReceiver() {
+    override fun onReceive(c: Context, i: Intent) { subscribe() }
+  }
 
-  override fun onCreate() { super.onCreate(); fused = LocationServices.getFusedLocationProviderClient(this); createChannel() }
+  override fun onCreate() {
+    super.onCreate(); fused = LocationServices.getFusedLocationProviderClient(this); createChannel()
+    ContextCompat.registerReceiver(this, motionReceiver, IntentFilter(ACTION_MOTION_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+  }
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { ConfigStore.setTracking(this,true); startForegroundNow(); subscribe(); return START_STICKY }
-  override fun onDestroy() { callback?.let { fused.removeLocationUpdates(it) }; handler.removeCallbacksAndMessages(null); super.onDestroy() }
+  override fun onDestroy() { callback?.let { fused.removeLocationUpdates(it) }; handler.removeCallbacksAndMessages(null); try { unregisterReceiver(motionReceiver) } catch (_: IllegalArgumentException) {}; super.onDestroy() }
   override fun onBind(intent: Intent?) = null
 
   private fun startForegroundNow() {
@@ -44,8 +58,8 @@ class LocationTrackingService: Service() {
 
   private fun handleLocation(l:Location){
     val id=UUID.randomUUID().toString(); val o=JSONObject().put("id",id).put("latitude",l.latitude).put("longitude",l.longitude).put("accuracy",l.accuracy).put("altitude",l.altitude).put("heading",l.bearing).put("speed",l.speed).put("timestamp",l.time).put("mocked", if(Build.VERSION.SDK_INT>=31) l.isMock else l.isFromMockProvider).put("motion",ConfigStore.motion(this)).put("source","fused")
-    val cfg=ConfigStore.json(this); LocationQueue(this).enqueue(o,cfg.optInt("maxQueueSize",10000)); emitJson("backgroundLocation:location",o)
-    val q=LocationQueue(this); val threshold=cfg.optJSONObject("http")?.optInt("syncThreshold",10)?:10; if(q.count()>=threshold) scheduleSync()
+    val cfg=ConfigStore.json(this); val q=LocationQueue.get(this); q.enqueue(o,cfg.optInt("maxQueueSize",10000)); emitJson("backgroundLocation:location",o)
+    val threshold=cfg.optJSONObject("http")?.optInt("syncThreshold",10)?:10; if(q.count()>=threshold) scheduleSync()
     val hb=cfg.optInt("heartbeatIntervalSeconds",60)*1000L; if(System.currentTimeMillis()-lastHeartbeat>=hb){ lastHeartbeat=System.currentTimeMillis(); emitHeartbeat(q.count()) }
   }
   private fun scheduleSync(){ val constraints=Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(); val req=OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(constraints).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build(); WorkManager.getInstance(this).enqueueUniqueWork("rn-bg-location-sync",ExistingWorkPolicy.KEEP,req) }

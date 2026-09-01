@@ -13,9 +13,9 @@ object NativeHttpSync {
   private val TOKEN = Regex("<%=\\s*(\\w+)\\s*%>")
 
   fun sync(context: Context): Pair<Int,Int> {
-    val cfg = ConfigStore.json(context).optJSONObject("http") ?: return 0 to LocationQueue(context).count()
-    val url = cfg.optString("url"); if (url.isBlank()) return 0 to LocationQueue(context).count()
-    val q = LocationQueue(context)
+    val cfg = ConfigStore.json(context).optJSONObject("http") ?: return 0 to LocationQueue.get(context).count()
+    val url = cfg.optString("url"); if (url.isBlank()) return 0 to LocationQueue.get(context).count()
+    val q = LocationQueue.get(context)
     return if (cfg.optBoolean("single", false)) syncSingle(cfg, url, q) else syncBatch(cfg, url, q)
   }
 

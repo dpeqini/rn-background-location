@@ -5,7 +5,15 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONObject
 
-class LocationQueue(context: Context): SQLiteOpenHelper(context, "rn_bg_location.db", null, 1) {
+class LocationQueue private constructor(context: Context): SQLiteOpenHelper(context, "rn_bg_location.db", null, 1) {
+  companion object {
+    // One helper per process. It was previously constructed per call site, twice per location
+    // fix, and never closed, so every fix leaked an open database connection.
+    @Volatile private var instance: LocationQueue? = null
+    fun get(context: Context): LocationQueue = instance ?: synchronized(this) {
+      instance ?: LocationQueue(context.applicationContext).also { instance = it }
+    }
+  }
   override fun onCreate(db: SQLiteDatabase) { db.execSQL("CREATE TABLE queue(id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT UNIQUE, created INTEGER, payload TEXT NOT NULL)") }
   override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
   @Synchronized fun enqueue(payload: JSONObject, max: Int) {
