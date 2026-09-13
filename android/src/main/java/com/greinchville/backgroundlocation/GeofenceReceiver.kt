@@ -24,7 +24,7 @@ class GeofenceReceiver: BroadcastReceiver() {
       val o = JSONObject().put("id", UUID.randomUUID().toString()).put("latitude", l.latitude)
         .put("longitude", l.longitude).put("accuracy", l.accuracy).put("timestamp", l.time)
         .put("motion", ConfigStore.motion(c)).put("source", "geofence")
-      LocationQueue.get(c).enqueue(o, ConfigStore.json(c).optInt("maxQueueSize", 10000))
+      OverflowReporter.add(LocationQueue.get(c).enqueue(o, ConfigStore.json(c).optInt("maxQueueSize", 10000)))
     }
     e.triggeringGeofences?.forEach { g ->
       val m = Arguments.createMap()

@@ -1,5 +1,5 @@
 import { NativeEventEmitter, NativeModules, Platform, PermissionsAndroid } from 'react-native';
-import type { TrackingConfig, LocationRecord, Geofence, GeofenceEvent, HeartbeatEvent, ProviderState } from './types';
+import type { TrackingConfig, LocationRecord, Geofence, GeofenceEvent, HeartbeatEvent, ProviderState, BackgroundLocationError } from './types';
 export * from './types';
 
 const LINKING_ERROR = `The package '@greinchville/react-native-background-location' is not linked. Rebuild the native app after installing it.`;
@@ -32,5 +32,5 @@ export const BackgroundLocation = {
   onGeofence(cb: (e: GeofenceEvent) => void) { return emitter.addListener('backgroundLocation:geofence', cb); },
   onHeartbeat(cb: (e: HeartbeatEvent) => void) { return emitter.addListener('backgroundLocation:heartbeat', cb); },
   onSync(cb: (e: {sent: number; remaining: number}) => void) { return emitter.addListener('backgroundLocation:sync', cb); },
-  onError(cb: (e: {code: string; message: string}) => void) { return emitter.addListener('backgroundLocation:error', cb); },
+  onError(cb: (e: BackgroundLocationError) => void) { return emitter.addListener('backgroundLocation:error', cb); },
 };

@@ -12,7 +12,8 @@ import java.util.concurrent.TimeUnit
 object NativeHttpSync {
   private val TOKEN = Regex("<%=\\s*(\\w+)\\s*%>")
 
-  fun sync(context: Context): Pair<Int,Int> {
+  // A JS sync() and the WorkManager job could otherwise both peek the same head batch and send it twice.
+  @Synchronized fun sync(context: Context): Pair<Int,Int> {
     val cfg = ConfigStore.json(context).optJSONObject("http") ?: return 0 to LocationQueue.get(context).count()
     val url = cfg.optString("url"); if (url.isBlank()) return 0 to LocationQueue.get(context).count()
     val q = LocationQueue.get(context)

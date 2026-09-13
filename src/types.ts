@@ -122,5 +122,20 @@ export interface GeofenceEvent {
   location?: LocationRecord;
 }
 
+/**
+ * `code` values carried by `onError` events. New codes may be added in minor versions, so handle
+ * unknown ones gracefully.
+ */
+export type BackgroundLocationErrorCode =
+  | 'authorization'
+  | 'backgroundMode'
+  | 'permission'
+  | 'paused'
+  | 'location'
+  | 'syncDropped'
+  | 'queueOverflow'
+  | 'storage';
+export interface BackgroundLocationError { code: BackgroundLocationErrorCode | (string & {}); message: string; }
+
 export interface HeartbeatEvent { timestamp: number; queueSize: number; motion: MotionType; }
 export interface ProviderState { enabled: boolean; authorization: string; tracking: boolean; mode: TrackingMode; queueSize: number; motion: MotionType; }

@@ -78,7 +78,7 @@ class LocationTrackingService: Service() {
 
   private fun handleLocation(l:Location){
     val id=UUID.randomUUID().toString(); val o=JSONObject().put("id",id).put("latitude",l.latitude).put("longitude",l.longitude).put("accuracy",l.accuracy).put("altitude",l.altitude).put("heading",l.bearing).put("speed",l.speed).put("timestamp",l.time).put("mocked", if(Build.VERSION.SDK_INT>=31) l.isMock else l.isFromMockProvider).put("motion",ConfigStore.motion(this)).put("source","fused")
-    val cfg=ConfigStore.json(this); val q=LocationQueue.get(this); q.enqueue(o,cfg.optInt("maxQueueSize",10000)); emitJson("backgroundLocation:location",o)
+    val cfg=ConfigStore.json(this); val q=LocationQueue.get(this); OverflowReporter.add(q.enqueue(o,cfg.optInt("maxQueueSize",10000))); emitJson("backgroundLocation:location",o)
     val threshold=cfg.optJSONObject("http")?.optInt("syncThreshold",10)?:10; if(q.count()>=threshold) scheduleSync()
   }
   // Was driven off incoming fixes, so a stationary user got no heartbeat at all - the opposite of

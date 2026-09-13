@@ -125,6 +125,30 @@ await BackgroundLocation.start();
 - `onSync`
 - `onError`
 
+### Error codes
+`onError` receives `{ code, message }`:
+
+| code | Meaning |
+|---|---|
+| `authorization` | Background tracking needs Always authorization (iOS). |
+| `backgroundMode` | Info.plist `UIBackgroundModes` is missing `location` (iOS). |
+| `permission` | Location permission was denied when subscribing (Android). |
+| `paused` | iOS paused location updates; significant-change monitoring is armed to resume them. |
+| `location` | Core Location reported a failure. |
+| `syncDropped` | The server rejected a batch permanently (4xx other than 408/429, or 5xx past `maxRetries`); it was discarded. |
+| `queueOverflow` | The queue reached `maxQueueSize` (or, on iOS, storage was unavailable) and the oldest fixes were discarded. At most one event per minute, with counts summed. |
+| `storage` | iOS could not write to the on-device queue; recent fixes are held in memory (up to 500) until storage is available. |
+
+### Delivery guarantees
+- **One upload in flight.** A new request starts only after the previous one finishes; a backlog
+  drains one batch at a time. Calling `sync()` while an upload is pending resolves with that upload's
+  result.
+- **At least once.** A batch is removed from the queue only after a 2xx. A request can still be
+  delivered twice (e.g. the app dies before the response is processed), so deduplicate on the
+  server by the location `id`.
+- **Bounded storage.** The queue is capped at `maxQueueSize` rows (default 10,000, a few MB); the
+  oldest rows are discarded first and reported via `queueOverflow`.
+
 ## Recommended server contract
 Request:
 ```json
