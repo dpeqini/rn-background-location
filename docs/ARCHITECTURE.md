@@ -29,7 +29,7 @@ SQLite durable queue
         |
         v
 Native sync engine
-  iOS: background URLSession
+  iOS: in-process URLSession
   Android: OkHttp + WorkManager
         |
         v
@@ -69,16 +69,20 @@ loaded before JS is required, and the appropriate Core Location primitive is res
 module also calls the bootstrap from its initialiser, which covers hosts that skipped the AppDelegate
 wiring, but only once the JS bundle has loaded — the AppDelegate call remains the correct path.
 
-Continuous location updates never relaunch a terminated app. While tracking in a continuous mode with
-Always authorization, significant-change monitoring is therefore armed alongside them purely as a
-relaunch net: it is what brings the process back after termination, including after the user swipes the
-app away in the app switcher. Timing is OS-controlled and each relaunch is a short window, so post-kill
-tracking is event-driven and coarse until continuous updates are restored. `stopOnTerminate` opts out of
-resuming. The host must also forward background URLSession completion callbacks.
+Continuous location updates never relaunch a terminated app. With Always authorization the engine keeps
+an exit-only relaunch geofence (default 150 m) around the last good fix, re-registered once the device
+has moved half its radius, and in continuous modes also arms significant-change monitoring as a second
+net. Either one brings the process back after termination, including after the user swipes the app away in the app
+switcher, and `bootstrap()` then restores continuous updates. Timing is OS-controlled. `stopOnTerminate`
+opts out of resuming and removes the fence.
 
-Upload acknowledgement is carried on the URLSession task rather than in memory, because a background
-upload routinely completes in a different process than the one that started it. Backoff state is
-persisted for the same reason.
+Uploads go through an ordinary URLSession with the body in memory, one at a time, wrapped in a UIKit
+background task. A fix is only delivered while the process runs, so a request always has a live process
+to finish in. A background URLSession was used before, but nsurlsessiond treats tasks created while the
+app is in the background as discretionary and could hold the single upload slot for up to an hour, and
+staging each body on disk meant a full disk stopped all uploads. Tasks such a version left behind are
+cancelled on launch; their rows are still queued. Backoff state is persisted, so an outage does not
+restart it from zero on every relaunch.
 
 ### Android
 The tracking service uses a location foreground service and returns `START_STICKY`. A boot/package-replaced receiver can restart tracking when configured and allowed. WorkManager is used for resilient network draining. Android policy restrictions still apply to starts from the background.

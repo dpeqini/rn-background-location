@@ -92,7 +92,10 @@ class LocationTrackingService: Service() {
   private fun heartbeatMs() = (ConfigStore.json(this).optInt("heartbeatIntervalSeconds",60)*1000L).coerceAtLeast(15000L)
   private fun startHeartbeat(){ handler.removeCallbacks(heartbeat); handler.postDelayed(heartbeat, heartbeatMs()) }
 
-  private fun scheduleSync(){ val constraints=Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(); val req=OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(constraints).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build(); WorkManager.getInstance(this).enqueueUniqueWork("rn-bg-location-sync",ExistingWorkPolicy.KEEP,req) }
+  // KEEP ignores new requests while a retry is pending, so the backoff bounds how long uploads can stall.
+  // Exponential backoff reached hours within a few failures; linear caps at 30 s x maxRetries (5 min by
+  // default), the same ceiling as the iOS SyncBackoff.
+  private fun scheduleSync(){ val constraints=Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(); val req=OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(constraints).setBackoffCriteria(BackoffPolicy.LINEAR,30,TimeUnit.SECONDS).build(); WorkManager.getInstance(this).enqueueUniqueWork("rn-bg-location-sync",ExistingWorkPolicy.KEEP,req) }
   private fun emitHeartbeat(size:Int){ val m=Arguments.createMap();m.putDouble("timestamp",System.currentTimeMillis().toDouble());m.putInt("queueSize",size);m.putString("motion",ConfigStore.motion(this));EventBus.emit("backgroundLocation:heartbeat",m) }
   private fun emitJson(name:String,o:JSONObject){ val m=Arguments.createMap(); o.keys().forEach{ k-> when(val v=o.get(k)){ is String->m.putString(k,v); is Double->m.putDouble(k,v); is Int->m.putInt(k,v); is Long->m.putDouble(k,v.toDouble()); is Boolean->m.putBoolean(k,v) } }; EventBus.emit(name,m) }
   private fun emitError(code:String,message:String){ val m=Arguments.createMap();m.putString("code",code);m.putString("message",message);EventBus.emit("backgroundLocation:error",m) }

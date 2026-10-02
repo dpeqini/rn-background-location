@@ -29,7 +29,7 @@ A native-first React Native background-location SDK for iOS and Android. Trackin
 - Queue records carry UUID, timestamp, coordinates, accuracy, altitude, heading, speed, source, and motion state.
 - Bounded queue and batch upload to limit memory.
 - Exponential retry on Android WorkManager.
-- Native background URLSession uploads on iOS.
+- Native in-process URLSession uploads on iOS.
 - HTTPS endpoints only in production; authentication headers supplied by the host app.
 - Avoid storing long-lived credentials in plain AsyncStorage. Prefer Keychain/Keystore and inject short-lived tokens into native configuration.
 - Explicit user consent and visible foreground-service notification on Android.

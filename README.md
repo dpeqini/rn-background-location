@@ -12,7 +12,7 @@ Reference implementation of a native-first React Native background-location libr
 - Durable SQLite location queue
 - Native batch HTTP synchronization
 - Android foreground service + WorkManager retry
-- iOS background URLSession upload
+- iOS in-process URLSession upload, sent from memory
 - Native heartbeat events
 - Android boot recovery option
 - TypeScript API and example app
@@ -43,7 +43,8 @@ Call the bootstrap in `didFinishLaunchingWithOptions` before React Native setup:
 ```swift
 NativeBackgroundLocationBootstrap.start()
 ```
-Forward background URLSession wakeups:
+Forward background URLSession wakeups. Uploads no longer use a background session, but this lets the
+library finish off tasks an earlier version left queued with the system:
 ```swift
 func application(_ application: UIApplication,
   handleEventsForBackgroundURLSession identifier: String,
@@ -65,13 +66,16 @@ emitted when tracking starts without it.
 | Situation | What happens |
 |---|---|
 | App backgrounded | Continuous updates keep running. The process is not suspended while the `location` background mode is active. |
-| System terminates the app | Significant-change monitoring relaunches it in the background and the stored configuration is restored. |
+| System terminates the app | A relaunch geofence or significant-change monitoring relaunches it in the background and the stored configuration is restored. |
 | User swipes the app away | Same relaunch path on iOS 8+. Timing is OS-controlled and can lag. |
 | `stopOnTerminate: true` | Tracking stays stopped after the process dies. |
 | Android swipe-away | The foreground service is restarted unless `stopOnTerminate` is set. |
 
-After a kill, tracking is **event-driven and coarse** — significant-change is roughly 500 m — until a
-relaunch restores continuous updates. Locations are persisted to SQLite before any upload is attempted,
+After a kill on iOS, nothing is recorded until the device leaves the **relaunch geofence**: an exit-only
+region of `ios.relaunchRadiusMeters` (default 150 m) that the library keeps around the last good fix.
+Crossing it relaunches the app, continuous updates resume, and the fence is re-armed around the new
+position. Significant-change monitoring (roughly 500 m) stays armed as a second net. The fence uses one of
+the 20 regions iOS allows per app, so `addGeofence` accepts at most 19. Locations are persisted to SQLite before any upload is attempted,
 so a gap in delivery is not a gap in data. Nothing recovers from a device-level Force Stop on Android or
 from revoked permissions.
 
@@ -118,6 +122,9 @@ await BackgroundLocation.start();
 - `removeAllGeofences()`
 
 ### Events
+`onSync` receives `{ sent, remaining }`, plus `status` (HTTP code, 0 without a response) and `error` when
+the upload failed.
+
 - `onLocation`
 - `onMotionChange`
 - `onGeofence`
@@ -135,13 +142,13 @@ await BackgroundLocation.start();
 | `permission` | Location permission was denied when subscribing (Android). |
 | `paused` | iOS paused location updates; significant-change monitoring is armed to resume them. |
 | `location` | Core Location reported a failure. |
-| `syncDropped` | The server rejected a batch permanently (4xx other than 408/429, or 5xx past `maxRetries`); it was discarded. |
+| `syncDropped` | The server rejected a batch permanently (4xx other than 408/429, or on iOS 5xx past `maxRetries`); it was discarded. |
 | `queueOverflow` | The queue reached `maxQueueSize` (or, on iOS, storage was unavailable) and the oldest fixes were discarded. At most one event per minute, with counts summed. |
 | `storage` | iOS could not write to the on-device queue; recent fixes are held in memory (up to 500) until storage is available. |
 
 ### Delivery guarantees
 - **One upload in flight.** A new request starts only after the previous one finishes; a backlog
-  drains one batch at a time. Calling `sync()` while an upload is pending resolves with that upload's
+  drains back to back, one batch (or, with `single`, one location) per request. Calling `sync()` while an upload is pending resolves with that upload's
   result.
 - **At least once.** A batch is removed from the queue only after a 2xx. A request can still be
   delivered twice (e.g. the app dies before the response is processed), so deduplicate on the

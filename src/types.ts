@@ -12,8 +12,10 @@ export interface HttpConfig {
    * Consecutive 5xx failures tolerated for one batch before it is discarded so it cannot block the
    * queue behind it. Defaults to 10. Transport failures (no network, timeout) are always retried and
    * never count against this. A 4xx other than 408/429 is treated as permanent and discards the batch
-   * immediately, since it will not start succeeding on repeat. Retries use exponential backoff capped
-   * at five minutes, persisted across process termination.
+   * immediately on both platforms, since it will not start succeeding on repeat. Retries back off to at
+   * most five minutes (on iOS persisted across process termination). On Android a batch that keeps
+   * failing with 5xx stays queued; the sync job gives up after maxRetries attempts and the next fix
+   * schedules a fresh one.
    */
   maxRetries?: number;
   syncThreshold?: number;
@@ -56,10 +58,11 @@ export interface TrackingConfig {
   fastestIntervalMs?: number;
   maxBatchDelayMs?: number;
   /**
-   * When false (the default), tracking resumes after the process is terminated: iOS relaunches
-   * the app in the background on a significant-change, region, or visit event and restores the
-   * stored configuration. Set true to leave tracking stopped once the process dies.
-   * Requires Always authorization. A deliberate user force-quit is not covered.
+   * When false (the default), tracking resumes after the process is terminated, including after the
+   * user swipes the app away. iOS relaunches the app in the background when the device leaves the
+   * relaunch geofence (see `ios.relaunchRadiusMeters`) or on a significant-change, region, or visit
+   * event, and the stored configuration is restored. Requires Always authorization. Set true to leave
+   * tracking stopped once the process dies.
    */
   stopOnTerminate?: boolean;
   startOnBoot?: boolean;
@@ -82,6 +85,12 @@ export interface TrackingConfig {
     notificationId?: number;
   };
   ios?: {
+    /**
+     * Radius of the exit-only region kept around the last good fix so that leaving it relaunches a
+     * terminated app. Defaults to 150, clamped to at least 100. Uses one of the 20 regions iOS allows
+     * per app, so `addGeofence` accepts at most 19.
+     */
+    relaunchRadiusMeters?: number;
     showsBackgroundLocationIndicator?: boolean;
     activityType?: 'other' | 'automotiveNavigation' | 'fitness' | 'otherNavigation' | 'airborne';
   };
@@ -136,6 +145,9 @@ export type BackgroundLocationErrorCode =
   | 'queueOverflow'
   | 'storage';
 export interface BackgroundLocationError { code: BackgroundLocationErrorCode | (string & {}); message: string; }
+
+/** `status` and `error` are set only when the upload failed; `status` is 0 when there was no response. */
+export interface SyncEvent { sent: number; remaining: number; status?: number; error?: string; }
 
 export interface HeartbeatEvent { timestamp: number; queueSize: number; motion: MotionType; }
 export interface ProviderState { enabled: boolean; authorization: string; tracking: boolean; mode: TrackingMode; queueSize: number; motion: MotionType; }

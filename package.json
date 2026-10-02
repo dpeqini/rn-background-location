@@ -1,6 +1,6 @@
 {
   "name": "@greinchville/react-native-background-location",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Native-first adaptive background location tracking for React Native",
   "main": "src/index.ts",
   "module": "src/index.ts",

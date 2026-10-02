@@ -33,12 +33,23 @@ Important: relaunch behaviour depends on which service is registered.
 
 - Continuous location updates never relaunch a terminated app.
 - Significant-change, region, and visit monitoring relaunch the app after termination, including
-  after the user swipes it away in the app switcher (iOS 8 and later). Timing is OS-controlled and
-  can be delayed, and each relaunch grants only a short background window, so treat post-kill
-  tracking as event-driven and coarse rather than continuous.
+  after the user swipes it away in the app switcher (iOS 8 and later).
 
-Forward background URLSession completions as well, or uploads that finish while the app is
-suspended will not be processed:
+## After the app is killed
+
+While tracking with Always authorization, the library keeps an exit-only **relaunch geofence** around
+the last good fix (`ios.relaunchRadiusMeters`, default 150 m) and, in continuous modes, significant-change
+monitoring as a second net. When the device leaves the fence, iOS relaunches the app in the background,
+`NativeBackgroundLocationBootstrap.start()` restores continuous updates, and the fence is re-armed around
+the new position. Expect a gap of roughly the fence radius after a kill. The relaunch timing is
+OS-controlled, so confirm it on a real device.
+
+To debug a relaunch in Xcode, set the scheme's Run > Info > Launch to **Wait for the executable to be
+launched**, swipe the app away, and keep the simulated location moving (Features > Location > City Run or
+Freeway Drive). The debugger attaches when iOS relaunches the app. Xcode's Stop button is not a swipe-kill.
+
+Forwarding background URLSession completions is optional since uploads moved to an in-process session,
+but keeps tasks left queued by an earlier version from lingering:
 
 ```swift
 func application(_ application: UIApplication,
