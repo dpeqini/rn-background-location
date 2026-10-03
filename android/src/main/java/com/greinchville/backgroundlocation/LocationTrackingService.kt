@@ -23,6 +23,8 @@ class LocationTrackingService: Service() {
   private lateinit var fused: FusedLocationProviderClient
   private var callback: LocationCallback? = null
   private val handler = Handler(Looper.getMainLooper())
+  // The speed band elasticity last applied; see Elasticity.
+  private var speedSteps = 0
   // Motion changes used to be applied by restarting the service, which is a background
   // foreground-service start on Android 12+ and throws. A running service re-subscribes in place.
   private val motionReceiver = object: BroadcastReceiver() {
@@ -34,7 +36,7 @@ class LocationTrackingService: Service() {
     ContextCompat.registerReceiver(this, motionReceiver, IntentFilter(ACTION_MOTION_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
   }
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    ConfigStore.setTracking(this,true); startForegroundNow(); subscribe(); startHeartbeat()
+    ConfigStore.setTracking(this,true); speedSteps=0; startForegroundNow(); subscribe(); startHeartbeat()
     return if (stopOnTerminate()) START_NOT_STICKY else START_STICKY
   }
   // Swipe-away from recents. START_STICKY would restart the service regardless of config, so the
@@ -59,11 +61,21 @@ class LocationTrackingService: Service() {
     val profile = profile(cfg.optString("mode","adaptive"), ConfigStore.motion(this))
     val p = when (profile) { "navigation", "active" -> Priority.PRIORITY_HIGH_ACCURACY; "balanced" -> Priority.PRIORITY_BALANCED_POWER_ACCURACY; else -> Priority.PRIORITY_LOW_POWER }
     val interval = when (profile) { "navigation" -> 5000L; "active" -> 10000L; "balanced" -> cfg.optLong("intervalMs",30000); else -> 120000L }
-    val minDist = when (profile) { "navigation" -> 10f; "active" -> cfg.optDouble("motionDistanceMeters",10.0).toFloat(); "balanced" -> cfg.optDouble("distanceFilterMeters",50.0).toFloat(); else -> 100f }
+    val base = when (profile) { "navigation" -> maxOf(cfg.optDouble("motionDistanceMeters",10.0),10.0); "active" -> cfg.optDouble("motionDistanceMeters",10.0); "balanced" -> cfg.optDouble("distanceFilterMeters",50.0); else -> 100.0 }
+    val minDist = Elasticity.filter(base, speedSteps, cfg).toFloat()
     val req=LocationRequest.Builder(p,interval).setMinUpdateIntervalMillis(cfg.optLong("fastestIntervalMs",5000)).setMinUpdateDistanceMeters(minDist).setMaxUpdateDelayMillis(cfg.optLong("maxBatchDelayMs",60000)).build()
     callback?.let{fused.removeLocationUpdates(it)}
-    callback=object:LocationCallback(){ override fun onLocationResult(r:LocationResult){ r.locations.forEach(::handleLocation) } }
+    callback=object:LocationCallback(){ override fun onLocationResult(r:LocationResult){ r.locations.forEach(::handleLocation); r.lastLocation?.let(::updateElasticity) } }
     try { fused.requestLocationUpdates(req, callback!!, Looper.getMainLooper()) } catch(e:SecurityException){ emitError("permission",e.message?:"Location permission denied") }
+  }
+
+  // A running request's minimum distance cannot be changed, so a new speed band means re-subscribing. The
+  // bands and their hysteresis keep that to once per band change rather than once per fix.
+  private fun updateElasticity(l:Location){
+    if (!l.hasSpeed()) return
+    val s = Elasticity.steps(l.speed.toDouble(), speedSteps)
+    if (s == speedSteps) return
+    speedSteps = s; subscribe()
   }
 
   // Mirrors the iOS profile(): only `adaptive` follows detected motion, an explicit mode stays put.
@@ -99,4 +111,25 @@ class LocationTrackingService: Service() {
   private fun emitHeartbeat(size:Int){ val m=Arguments.createMap();m.putDouble("timestamp",System.currentTimeMillis().toDouble());m.putInt("queueSize",size);m.putString("motion",ConfigStore.motion(this));EventBus.emit("backgroundLocation:heartbeat",m) }
   private fun emitJson(name:String,o:JSONObject){ val m=Arguments.createMap(); o.keys().forEach{ k-> when(val v=o.get(k)){ is String->m.putString(k,v); is Double->m.putDouble(k,v); is Int->m.putInt(k,v); is Long->m.putDouble(k,v.toDouble()); is Boolean->m.putBoolean(k,v) } }; EventBus.emit(name,m) }
   private fun emitError(code:String,message:String){ val m=Arguments.createMap();m.putString("code",code);m.putString("message",message);EventBus.emit("backgroundLocation:error",m) }
+}
+
+// Widens the distance filter with speed, as Transistorsoft's elasticity does: at speed the provider delivers
+// a fix about every second whatever the filter, so a fixed small filter means one upload per second.
+// Mirrors Elasticity in NativeBackgroundLocation.swift; keep the two in step.
+internal object Elasticity {
+  // One band per 5 m/s (18 km/h). Up as soon as speed crosses a threshold, down only 1 m/s below it, so a
+  // speed hovering on a boundary does not flip the filter on every fix.
+  fun steps(speed: Double, current: Int): Int {
+    if (speed < 0) return current
+    val raw = minOf((speed / 5).toInt(), 20)
+    if (raw < current && speed > current * 5.0 - 1) return current
+    return raw
+  }
+  // base x (1 + multiplier x steps), capped at maxDistanceFilterMeters (never below the base itself).
+  fun filter(base: Double, steps: Int, cfg: JSONObject): Double {
+    if (!cfg.optBoolean("elasticity", true)) return base
+    val multiplier = cfg.optDouble("elasticityMultiplier", 1.0)
+    val cap = maxOf(cfg.optDouble("maxDistanceFilterMeters", 100.0), base)
+    return minOf(base * (1 + multiplier * steps), cap)
+  }
 }

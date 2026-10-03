@@ -49,6 +49,9 @@ final class BackgroundLocationEngine: NSObject, CLLocationManagerDelegate {
   private var storageReportScheduled=false
   // One upload at a time; see sync().
   private var uploading=false
+  // The current profile's distance filter before elasticity, and the speed band elasticity last applied.
+  private var baseDistanceFilter:Double=50
+  private var speedSteps=0
   // Exit-only region kept around the last good fix. Region monitoring relaunches a terminated app, including
   // after a swipe-kill from the app switcher, and a region this small fires within a couple of hundred metres.
   // Significant-change monitoring alone waits for roughly 500 m and a cell-tower change.
@@ -74,7 +77,7 @@ final class BackgroundLocationEngine: NSObject, CLLocationManagerDelegate {
   private var stopOnTerminate:Bool{config["stopOnTerminate"] as? Bool ?? false}
   private func stopPrimitives(){manager.stopUpdatingLocation();manager.stopMonitoringSignificantLocationChanges();manager.stopMonitoringVisits();safetyNet=false}
   func requestAlways(){ onMain{[weak self] in self?.manager.requestAlwaysAuthorization()} }
-  func start(){ onMain{[weak self] in guard let self else{return};self.tracking=true;UserDefaults.standard.set(true,forKey:"rn_bg_location_tracking");self.applyMode();self.startLocationPrimitive();self.startMotion();self.startHeartbeat()} }
+  func start(){ onMain{[weak self] in guard let self else{return};self.tracking=true;self.speedSteps=0;UserDefaults.standard.set(true,forKey:"rn_bg_location_tracking");self.applyMode();self.startLocationPrimitive();self.startMotion();self.startHeartbeat()} }
   // Runs on every launch, including the background relaunches iOS grants after the process dies.
   func bootstrap(){ onMain{[weak self] in guard let self else{return}
     self.loadConfig()
@@ -129,11 +132,19 @@ final class BackgroundLocationEngine: NSObject, CLLocationManagerDelegate {
     // background that regularly means never. Hosts opt back in with pausesAutomatically.
     manager.pausesLocationUpdatesAutomatically=config["pausesAutomatically"] as? Bool ?? false
     switch profile(){
-    case "navigation":manager.desiredAccuracy=kCLLocationAccuracyBestForNavigation;manager.distanceFilter=10;manager.pausesLocationUpdatesAutomatically=false
-    case "active":manager.desiredAccuracy=kCLLocationAccuracyBest;manager.distanceFilter=config["motionDistanceMeters"] as? Double ?? 10
-    case "balanced":manager.desiredAccuracy=kCLLocationAccuracyHundredMeters;manager.distanceFilter=config["distanceFilterMeters"] as? Double ?? 50
-    default:manager.desiredAccuracy=kCLLocationAccuracyKilometer;manager.distanceFilter=100
+    case "navigation":manager.desiredAccuracy=kCLLocationAccuracyBestForNavigation;baseDistanceFilter=max(config["motionDistanceMeters"] as? Double ?? 10,10);manager.pausesLocationUpdatesAutomatically=false
+    case "active":manager.desiredAccuracy=kCLLocationAccuracyBest;baseDistanceFilter=config["motionDistanceMeters"] as? Double ?? 10
+    case "balanced":manager.desiredAccuracy=kCLLocationAccuracyHundredMeters;baseDistanceFilter=config["distanceFilterMeters"] as? Double ?? 50
+    default:manager.desiredAccuracy=kCLLocationAccuracyKilometer;baseDistanceFilter=100
     }
+    manager.distanceFilter=Elasticity.filter(base:baseDistanceFilter,steps:speedSteps,config:config)
+  }
+  // Only reassigns the filter when the speed band changes; Core Location accepts it while updates run.
+  private func updateElasticity(_ speed:CLLocationSpeed){
+    let s=Elasticity.steps(speed:speed,current:speedSteps)
+    guard s != speedSteps else{return}
+    speedSteps=s
+    manager.distanceFilter=Elasticity.filter(base:baseDistanceFilter,steps:s,config:config)
   }
   // Only adaptive follows Core Motion; an explicit mode stays where the host put it.
   private func profile()->String{
@@ -163,6 +174,7 @@ final class BackgroundLocationEngine: NSObject, CLLocationManagerDelegate {
     store(ls,primarySource)
     guard let l=ls.last else{return}
     lastFix=l
+    updateElasticity(l.speed)
     armRelaunchFence(l)
     let r=record(l,primarySource);let pending=oneShots;oneShots=[];pending.forEach{$0.settle(.success(r))}
   }
@@ -348,6 +360,27 @@ final class BackgroundLocationEngine: NSObject, CLLocationManagerDelegate {
       out=out.replacingOccurrences(of:"<%= \(k) %>",with:s).replacingOccurrences(of:"<%=\(k)%>",with:s)
     }
     return out
+  }
+}
+
+// Widens the distance filter with speed, as Transistorsoft's elasticity does: at speed the hardware delivers
+// a fix about every second whatever the filter, so a fixed small filter means one upload per second.
+// Mirrored in LocationTrackingService.kt; keep the two in step.
+enum Elasticity {
+  // One band per 5 m/s (18 km/h). Up as soon as speed crosses a threshold, down only 1 m/s below it, so a
+  // speed hovering on a boundary does not flip the filter on every fix. A negative speed means unknown.
+  static func steps(speed:Double,current:Int)->Int{
+    guard speed>=0 else{return current}
+    let raw=min(Int(speed/5),20)
+    if raw<current && speed>Double(current)*5-1 {return current}
+    return raw
+  }
+  // base x (1 + multiplier x steps), capped at maxDistanceFilterMeters (never below the base itself).
+  static func filter(base:Double,steps:Int,config:[String:Any])->Double{
+    guard config["elasticity"] as? Bool ?? true else{return base}
+    let multiplier=config["elasticityMultiplier"] as? Double ?? 1
+    let cap=max(config["maxDistanceFilterMeters"] as? Double ?? 100,base)
+    return min(base*(1+multiplier*Double(steps)),cap)
   }
 }
 

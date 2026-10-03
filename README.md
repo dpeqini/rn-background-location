@@ -71,6 +71,12 @@ emitted when tracking starts without it.
 | `stopOnTerminate: true` | Tracking stays stopped after the process dies. |
 | Android swipe-away | The foreground service is restarted unless `stopOnTerminate` is set. |
 
+**Elastic distance filter.** At speed the platform delivers a fix about every second whatever the
+distance filter, so a small filter means one fix per second while driving. With `elasticity` (on by
+default) every 5 m/s (18 km/h) of speed adds one more multiple of the profile's distance, up to
+`maxDistanceFilterMeters` (default 100). With a 20 m base: walking stays at 20 m, about 40–60 m on a bus, and the
+100 m cap on a highway. Set `elasticity: false` for a fixed filter.
+
 After a kill on iOS, nothing is recorded until the device leaves the **relaunch geofence**: an exit-only
 region of `ios.relaunchRadiusMeters` (default 150 m) that the library keeps around the last good fix.
 Crossing it relaunches the app, continuous updates resume, and the fence is re-armed around the new

@@ -89,7 +89,9 @@ The tracking service uses a location foreground service and returns `START_STICK
 
 ## Battery strategy
 - Prefer balanced/low-power providers unless active motion requires higher precision.
-- Use minimum-distance filtering to avoid processing redundant samples.
+- Use minimum-distance filtering to avoid processing redundant samples, widened with speed (elasticity):
+  one band per 5 m/s, filter = base x (1 + multiplier x bands), capped at `maxDistanceFilterMeters`. On
+  Android a band change re-subscribes the fused request, which cannot change a running request's distance.
 - Batch delivery with `maxBatchDelayMs` on Android.
 - Allow iOS automatic pausing except navigation mode.
 - Switch stationary users to coarse/significant-change behavior.

@@ -75,6 +75,18 @@ export interface TrackingConfig {
   heartbeatIntervalSeconds?: number;
   motionDetection?: boolean;
   motionDistanceMeters?: number;
+  /**
+   * Widens the distance filter with speed. Defaults to true. At speed the platform delivers a fix about
+   * every second whatever the filter, so without this a small filter means one fix (and, with
+   * `http.single`, one request) per second. Each 5 m/s (18 km/h) of speed adds one band:
+   * `filter = min(base x (1 + elasticityMultiplier x bands), max(maxDistanceFilterMeters, base))`, where base
+   * is the active profile's distance. Speed must drop 1 m/s below a threshold before a band is removed.
+   */
+  elasticity?: boolean;
+  /** How much each speed band widens the filter. Defaults to 1. */
+  elasticityMultiplier?: number;
+  /** Upper bound for the elastic distance filter. Defaults to 100; never below the profile's base. */
+  maxDistanceFilterMeters?: number;
   geofencing?: boolean;
   maxQueueSize?: number;
   http?: HttpConfig;
